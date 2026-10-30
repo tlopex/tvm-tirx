@@ -49,6 +49,17 @@ void AllowUIntAsIndex::ExitWithScope() {
   --depth_;
 }
 
+thread_local int DefaultZ3Fallback::depth_ = 0;
+
+bool DefaultZ3Fallback::Enabled() { return depth_ > 0; }
+
+void DefaultZ3Fallback::EnterWithScope() { ++depth_; }
+
+void DefaultZ3Fallback::ExitWithScope() {
+  TVM_FFI_ICHECK(depth_ > 0) << "DefaultZ3Fallback exit without a matching enter";
+  --depth_;
+}
+
 AnalyzerObj::AnalyzerObj()
     : const_int_bound(this),
       modular_set(this),
@@ -313,9 +324,10 @@ bool AnalyzerObj::CanProve(const PrimExpr& expr, ProofStrength strength) {
     }
   }
 
-  // Native analysis runs first. Z3 is the final best-effort fallback at every
-  // strength, including default queries from recursive simplification.
-  if (z3_prover.CanProve(simplified)) {
+  // Keep frequent default queries on the native fast path unless opted in.
+  // Explicit stronger queries retain their best-effort Z3 fallback.
+  if ((strength >= ProofStrength::kSymbolicBound || DefaultZ3Fallback::Enabled()) &&
+      z3_prover.CanProve(simplified)) {
     return true;
   }
   return false;
@@ -399,6 +411,13 @@ TVM_FFI_STATIC_INIT_BLOCK() {
            []() {
              // With has a noexcept(false) destructor, so it cannot use make_shared.
              auto ctx = std::shared_ptr<With<AllowUIntAsIndex>>(new With<AllowUIntAsIndex>());
+             return ffi::Function::FromPacked(
+                 [ctx](ffi::PackedArgs, ffi::Any*) mutable { ctx.reset(); });
+           })
+      .def("sym.AnalyzerEnterDefaultZ3Fallback",
+           []() {
+             // With has a noexcept(false) destructor, so it cannot use make_shared.
+             auto ctx = std::shared_ptr<With<DefaultZ3Fallback>>(new With<DefaultZ3Fallback>());
              return ffi::Function::FromPacked(
                  [ctx](ffi::PackedArgs, ffi::Any*) mutable { ctx.reset(); });
            })

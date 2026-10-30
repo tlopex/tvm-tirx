@@ -56,6 +56,7 @@ Functions
    estimate_region_strict_bound
    estimate_region_upper_bound
    allow_uint_as_index
+   default_z3_fallback
    deduce_bound
    detect_iter_map
    iter_map_simplify

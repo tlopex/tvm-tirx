@@ -324,9 +324,10 @@ class Analyzer(tvm_ffi.Object):
 
         strength: ProofStrength
             The proof strength. ``SYMBOLIC_BOUND`` additionally enables symbolic
-            bound analysis. When built with Z3 (``TVM_TIRX_USE_Z3=ON``), all
-            strengths, including ``DEFAULT``, try Z3 after native analysis fails
-            to prove the predicate. The existing Z3 timeout and resource limits
+            bound analysis and retains Z3 fallback when built with Z3
+            (``TVM_TIRX_USE_Z3=ON``). ``DEFAULT`` only tries Z3 inside
+            :py:func:`default_z3_fallback`, after native analysis fails to prove
+            the predicate. The existing Z3 timeout and resource limits
             apply; an unknown solver result means the predicate cannot be proved.
 
         Returns
@@ -404,6 +405,37 @@ class Analyzer(tvm_ffi.Object):
             Returns ``CompareResult.UNKNOWN`` when nothing can be proven.
         """
         return CompareResult(_ffi_api.AnalyzerTryCompare(self, lhs, rhs))
+
+
+@contextmanager
+def default_z3_fallback():
+    """Opt in to Z3 fallback for DEFAULT proof queries in this thread.
+
+    Off by default. Native analysis runs first; within this scope, failed
+    ``DEFAULT`` queries (including recursive simplification) also try Z3 when
+    available. Explicit ``SYMBOLIC_BOUND`` queries retain Z3 fallback outside
+    this scope. Solver limits, arithmetic assumptions, and conservative results
+    for unsupported or inconclusive queries are unchanged.
+
+    Scopes can be nested and restore the previous state on normal or exceptional
+    exit. The setting applies to all analyzers in the current thread, including
+    those created inside the scope; it is not stored on or cloned with an analyzer.
+
+    For example, enable additional nonlinear signed-index proofs locally::
+
+        with tvm_tirx.sym.default_z3_fallback():
+            proved = analyzer.can_prove(x * x + y * y >= 2 * x * y)
+
+    The scope must cover the operation that performs the proof. It can also wrap
+    ``tvm_tirx.tirx.compile(...)`` or a pass that needs additional proof capability.
+    Native tileop descriptor checks use DEFAULT queries followed by finite-domain
+    validation, so they keep the native fast path unless the caller opts in.
+    """
+    exit_scope = _ffi_api.AnalyzerEnterDefaultZ3Fallback()
+    try:
+        yield
+    finally:
+        exit_scope()
 
 
 @contextmanager

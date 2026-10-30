@@ -32,6 +32,7 @@ from .analyzer import (
     ProofStrength,
     CompareResult,
     allow_uint_as_index,
+    default_z3_fallback,
 )
 from .iter_affine_map import IterMapExpr, IterMark, IterSplitExpr, IterSumExpr
 from .iter_affine_map import (

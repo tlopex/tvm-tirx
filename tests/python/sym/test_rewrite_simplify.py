@@ -1834,8 +1834,8 @@ def test_allow_uint_as_index():
         + (lane % 8 * 64).astype("uint32")
     )
     check = flm(fld(s_off, T.uint32(512)), T.uint32(2))
-    # Default queries may now use Z3 without this mode. Inspect native
-    # rewriting to test the scope of the no-overflow rewrite rules.
+    # Inspect native rewriting to isolate the no-overflow rewrite rules
+    # from optional Z3 proofs.
     unscoped = analyzer.rewrite_simplify(check)
     assert not tvm_ffi.structural_equal(unscoped, T.uint32(0))
     # a non-pow2 divisor never folds, inside or outside the mode... unless

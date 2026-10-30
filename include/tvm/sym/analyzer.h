@@ -78,7 +78,7 @@ enum DivMode {
  * analysis and only use it at top-level simplification to avoid speed issues.
  */
 enum class ProofStrength : int {
-  /*! \brief Default analysis followed by the optional Z3 fallback. */
+  /*! \brief Native analysis, with Z3 fallback inside a DefaultZ3Fallback scope. */
   kDefault = 0,
   /*!
    * \brief Prove using symbolic bound analysis
@@ -658,7 +658,8 @@ class TVM_TIRX_DLL AnalyzerObj : public ffi::Object {
    * \note Analyzer will call into sub-analyzers to get the result.
    * Do not use strength beyond default in sub-analyzers and
    * only use it in top-level predicate analysis.
-   * When built with Z3, all strengths try it after native analysis fails.
+   * When built with Z3, kSymbolicBound and higher try it after native analysis fails.
+   * kDefault only tries Z3 inside a With<DefaultZ3Fallback> scope.
    * Z3's existing resource limit and timeout apply; unknown means cannot prove.
    */
   bool CanProve(const PrimExpr& cond, ProofStrength strength = ProofStrength::kDefault);
@@ -770,6 +771,35 @@ class AllowUIntAsIndex {
   // Called across the DLL boundary by the inline With<> destructor.
   TVM_TIRX_DLL void ExitWithScope();
   // Number of active scopes in this thread.
+  static thread_local int depth_;
+};
+
+/*!
+ * \brief Scoped opt-in to Z3 fallback for default-strength proof queries.
+ *
+ * Native analysis runs first. Inside With<DefaultZ3Fallback>, failed kDefault
+ * queries, including those from recursive simplification, also try Z3 when
+ * available. Explicit kSymbolicBound queries can use Z3 regardless of this scope.
+ * Solver limits and conservative handling of unsupported or inconclusive queries
+ * are unchanged. This does not change the analyzer's arithmetic assumptions.
+ *
+ * Off by default to keep frequent internal queries inexpensive. The setting is
+ * thread-local, supports nesting, and is restored on scope exit. Constructing
+ * this context alone does not enable fallback. Scope the query, pass, or compile
+ * operation that needs additional proof capability.
+ */
+class DefaultZ3Fallback {
+ public:
+  /*!
+   * \brief Check whether default-strength queries in this thread may try Z3.
+   * \return True inside an active With<DefaultZ3Fallback> scope.
+   */
+  TVM_TIRX_DLL static bool Enabled();
+
+ private:
+  friend class With<DefaultZ3Fallback>;
+  TVM_TIRX_DLL void EnterWithScope();
+  TVM_TIRX_DLL void ExitWithScope();
   static thread_local int depth_;
 };
 

@@ -24,10 +24,10 @@ import pytest
 import tvm_tirx
 import tvm_tirx.testing
 from tvm_tirx import tirx
-from tvm_tirx.sym import Analyzer, ProofStrength
+from tvm_tirx.sym import Analyzer, ProofStrength, default_z3_fallback
 
-# Both strengths use Z3 after native analysis; SYMBOLIC_BOUND additionally
-# enables symbolic interval reasoning.
+# SYMBOLIC_BOUND retains Z3 fallback outside default_z3_fallback scopes and
+# additionally enables symbolic interval reasoning.
 SB = ProofStrength.SYMBOLIC_BOUND
 
 
@@ -136,7 +136,7 @@ def test_z3_context_clone_lifetime():
 # ---------------------------------------------------------------------------
 # Examples the native analyzer cannot prove but Z3 can.
 #
-# These predicates can use Z3 at both DEFAULT and SYMBOLIC_BOUND. Cases the
+# These predicates can use Z3 at scoped DEFAULT and explicit SYMBOLIC_BOUND. Cases the
 # native analyzer learns to prove remain here as translation regressions.
 # Wide signed arithmetic uses the existing no-overflow index-analysis model.
 # ---------------------------------------------------------------------------
@@ -157,7 +157,8 @@ def test_z3_floor_division_identity_constraint():
     analyzer_context.append(tvm_tirx.sym.PredicateConstraint(tirx.all(a > 0, b > 0, c > 0)))
     analyzer.sync_constraint_context(analyzer_context)
     try:
-        assert analyzer.can_prove(expr)
+        with default_z3_fallback():
+            assert analyzer.can_prove(expr)
         assert analyzer.can_prove(expr, SB)
     finally:
         analyzer_context = parent_context_1
@@ -194,7 +195,8 @@ def test_z3_multiplication_monotonicity():
     d = tirx.Var("d", "int32")
 
     expr = implies(tirx.all(a < b, b < c, a * d < b * d), b * d < c * d)
-    assert analyzer.can_prove(expr)
+    with default_z3_fallback():
+        assert analyzer.can_prove(expr)
     assert analyzer.can_prove(expr, SB)
 
 
@@ -254,7 +256,8 @@ def test_z3_select_absolute_value_nonneg():
 
     x = tirx.Var("x", "int32")
     expr = tirx.Select(x >= 0, x, -x) >= 0
-    assert analyzer.can_prove(expr)
+    with default_z3_fallback():
+        assert analyzer.can_prove(expr)
     assert analyzer.can_prove(expr, SB)
 
 
@@ -282,7 +285,8 @@ def test_z3_square_expansion_nonneg():
     analyzer_context.append(tvm_tirx.sym.PredicateConstraint(tirx.all(a >= 0, b >= 0)))
     analyzer.sync_constraint_context(analyzer_context)
     try:
-        assert analyzer.can_prove(expr)
+        with default_z3_fallback():
+            assert analyzer.can_prove(expr)
         assert analyzer.can_prove(expr, SB)
     finally:
         analyzer_context = parent_context_2
@@ -296,7 +300,8 @@ def test_z3_square_monotonicity():
     a = tirx.Var("a", "int32")
     b = tirx.Var("b", "int32")
     expr = implies(tirx.all(0 <= a, a <= b), a * a <= b * b)
-    assert analyzer.can_prove(expr)
+    with default_z3_fallback():
+        assert analyzer.can_prove(expr)
     assert analyzer.can_prove(expr, SB)
 
 
@@ -308,7 +313,8 @@ def test_z3_strict_multiplication():
     b = tirx.Var("b", "int32")
     d = tirx.Var("d", "int32")
     expr = implies(tirx.all(a < b, d > 0), a * d < b * d)
-    assert analyzer.can_prove(expr)
+    with default_z3_fallback():
+        assert analyzer.can_prove(expr)
     assert analyzer.can_prove(expr, SB)
 
 
@@ -321,7 +327,8 @@ def test_z3_floor_division_monotonicity():
     c = tirx.Var("c", "int32")
     expr = implies(tirx.all(a <= b, c > 0), tirx.floordiv(a, c) <= tirx.floordiv(b, c))
     analyzer.set_z3_rlimit(0)
-    assert analyzer.can_prove(expr)
+    with default_z3_fallback():
+        assert analyzer.can_prove(expr)
     assert analyzer.can_prove(expr, SB)
 
 
@@ -332,7 +339,8 @@ def test_z3_floor_division_lower_bound():
     a = tirx.Var("a", "int32")
     b = tirx.Var("b", "int32")
     expr = implies(b > 0, tirx.floordiv(a, b) * b <= a)
-    assert analyzer.can_prove(expr)
+    with default_z3_fallback():
+        assert analyzer.can_prove(expr)
     assert analyzer.can_prove(expr, SB)
 
 
@@ -343,7 +351,8 @@ def test_z3_floor_modulo_range():
     a = tirx.Var("a", "int32")
     b = tirx.Var("b", "int32")
     expr = implies(b > 0, tirx.all(0 <= tirx.floormod(a, b), tirx.floormod(a, b) < b))
-    assert analyzer.can_prove(expr)
+    with default_z3_fallback():
+        assert analyzer.can_prove(expr)
     assert analyzer.can_prove(expr, SB)
 
 
@@ -368,7 +377,8 @@ def test_z3_flattened_index_bound():
     analyzer.sync_constraint_context(analyzer_context)
     try:
         analyzer.set_z3_rlimit(0)
-        assert analyzer.can_prove(expr)
+        with default_z3_fallback():
+            assert analyzer.can_prove(expr)
         assert analyzer.can_prove(expr, SB)
     finally:
         analyzer_context = parent_context_3
@@ -394,7 +404,8 @@ def test_z3_modular_combination():
     )
     analyzer.sync_constraint_context(analyzer_context)
     try:
-        assert analyzer.can_prove(expr)
+        with default_z3_fallback():
+            assert analyzer.can_prove(expr)
         assert analyzer.can_prove(expr, SB)
     finally:
         analyzer_context = parent_context_4
@@ -406,7 +417,8 @@ def test_z3_square_non_negative():
     _require_z3(analyzer)
 
     a = tirx.Var("a", "int32")
-    assert analyzer.can_prove(a * a >= 0)
+    with default_z3_fallback():
+        assert analyzer.can_prove(a * a >= 0)
     assert analyzer.can_prove(a * a >= 0, SB)
 
 
@@ -416,7 +428,8 @@ def test_z3_min_max_average_bounds():
 
     a = tirx.Var("a", "int32")
     b = tirx.Var("b", "int32")
-    assert analyzer.can_prove(tirx.max(a, b) * 2 >= a + b)
+    with default_z3_fallback():
+        assert analyzer.can_prove(tirx.max(a, b) * 2 >= a + b)
     assert analyzer.can_prove(tirx.max(a, b) * 2 >= a + b, SB)
     assert analyzer.can_prove(tirx.min(a, b) * 2 <= a + b, SB)
 
@@ -439,13 +452,15 @@ def test_z3_symbolic_bind_range_with_constraint():
     try:
         # Z3 does not restrict x to an empty range, and n <= 8 still permits
         # n <= 0. Default fallback does not enable symbolic-bound analysis.
-        assert not analyzer.can_prove(x < 8)
+        with default_z3_fallback():
+            assert not analyzer.can_prove(x < 8)
         assert analyzer.can_prove(x < 8, SB)
         positive_context = analyzer_context.snapshot()
         positive_context.append(tvm_tirx.sym.PredicateConstraint(n > 0))
         analyzer.sync_constraint_context(positive_context)
         try:
-            assert analyzer.can_prove(x < 8)
+            with default_z3_fallback():
+                assert analyzer.can_prove(x < 8)
         finally:
             analyzer.sync_constraint_context(analyzer_context)
     finally:
@@ -460,7 +475,8 @@ def test_z3_equality_congruence():
     a = tirx.Var("a", "int32")
     b = tirx.Var("b", "int32")
     expr = implies(a == b, a * a == b * b)
-    assert analyzer.can_prove(expr)
+    with default_z3_fallback():
+        assert analyzer.can_prove(expr)
     assert analyzer.can_prove(expr, SB)
 
 
@@ -473,7 +489,8 @@ def test_z3_integer_strict_transitivity():
     c = tirx.Var("c", "int32")
     # Over the integers, a < b and b < c implies a + 1 < c.
     expr = implies(tirx.all(a < b, b < c), a + 1 < c)
-    assert analyzer.can_prove(expr)
+    with default_z3_fallback():
+        assert analyzer.can_prove(expr)
     assert analyzer.can_prove(expr, SB)
 
 
@@ -483,7 +500,8 @@ def test_z3_if_then_else_absolute_value():
 
     x = tirx.Var("x", "int32")
     expr = tirx.if_then_else(x >= 0, x, -x) >= 0
-    assert analyzer.can_prove(expr)
+    with default_z3_fallback():
+        assert analyzer.can_prove(expr)
     assert analyzer.can_prove(expr, SB)
 
 
@@ -492,7 +510,8 @@ def test_z3_unsigned_non_negative():
     _require_z3(analyzer)
 
     u = tirx.Var("u", "uint32")
-    assert analyzer.can_prove(u >= 0)
+    with default_z3_fallback():
+        assert analyzer.can_prove(u >= 0)
     assert analyzer.can_prove(u >= 0, SB)
 
 
@@ -502,7 +521,8 @@ def test_z3_unsigned64_non_negative():
     _require_z3(analyzer)
 
     u = tirx.Var("u", "uint64")
-    assert analyzer.can_prove(u >= 0)
+    with default_z3_fallback():
+        assert analyzer.can_prove(u >= 0)
     assert analyzer.can_prove(u >= 0, SB)
 
 
@@ -519,7 +539,8 @@ def test_z3_int64_square_expansion():
     analyzer_context.append(tvm_tirx.sym.PredicateConstraint(tirx.all(a >= 0, b >= 0)))
     analyzer.sync_constraint_context(analyzer_context)
     try:
-        assert analyzer.can_prove(expr)
+        with default_z3_fallback():
+            assert analyzer.can_prove(expr)
         assert analyzer.can_prove(expr, SB)
     finally:
         analyzer_context = parent_context_6
@@ -533,7 +554,8 @@ def test_z3_boolean_variable_reasoning():
     p = tirx.Var("p", "bool")
     q = tirx.Var("q", "bool")
     expr = implies(tirx.And(p, q), tirx.Or(p, q))
-    assert analyzer.can_prove(expr)
+    with default_z3_fallback():
+        assert analyzer.can_prove(expr)
     assert analyzer.can_prove(expr, SB)
 
 
@@ -544,7 +566,8 @@ def test_z3_not_equal_from_strict_less():
     x = tirx.Var("x", "int32")
     y = tirx.Var("y", "int32")
     expr = implies(x < y, tirx.NE(x, y))
-    assert analyzer.can_prove(expr)
+    with default_z3_fallback():
+        assert analyzer.can_prove(expr)
     assert analyzer.can_prove(expr, SB)
 
 
@@ -555,7 +578,8 @@ def test_z3_let_expression():
     y = tirx.Var("y", "int32")
     t = tirx.Var("t", "int32")
     let = tirx.Let(t, y * 2, t)
-    assert analyzer.can_prove(let == y * 2)
+    with default_z3_fallback():
+        assert analyzer.can_prove(let == y * 2)
     assert analyzer.can_prove(let == y * 2, SB)
 
 
@@ -898,13 +922,20 @@ def test_z3_default_fallback_nonlinear_inequality():
     y = tirx.Var("y", "int32")
     # x*x + y*y - 2*x*y == (x-y)**2 >= 0 in the mathematical integer
     # model used for wide signed indices. This does not model int32 overflow.
-    # A fresh analyzer must prove this without an option or explicit strength
-    # when Z3 is available. Native analysis alone cannot currently prove it.
+    # Native analysis alone cannot currently prove this. The scope affects
+    # existing and new analyzers, and explicit stronger queries remain available.
     expr = x * x + y * y >= 2 * (x * y)
-    assert analyzer.can_prove(expr) == analyzer.is_z3_enabled
-    assert analyzer.can_prove(x == x)
-    # Equality at x == y is a counterexample to the strict inequality.
-    assert not analyzer.can_prove(x * x + y * y > 2 * (x * y))
+    assert not analyzer.can_prove(expr)
+    assert analyzer.can_prove(expr, SB) == analyzer.is_z3_enabled
+    with default_z3_fallback():
+        assert analyzer.can_prove(expr) == analyzer.is_z3_enabled
+        assert Analyzer().can_prove(expr) == analyzer.is_z3_enabled
+        assert analyzer.can_prove(x == x)
+        # Equality at x == y is a counterexample to the strict inequality.
+        assert not analyzer.can_prove(x * x + y * y > 2 * (x * y))
+        # Unsupported/effectful expressions remain inconclusive.
+        assert not analyzer.can_prove(tirx.call_extern("foo", x, ty="int32") > 0)
+    assert not analyzer.can_prove(expr)
 
 
 def test_z3_default_fallback_clone_preserves_independent_resource_limit():
@@ -916,10 +947,14 @@ def test_z3_default_fallback_clone_preserves_independent_resource_limit():
     analyzer.set_z3_rlimit(1)
     cloned = analyzer.clone()
     analyzer.set_z3_rlimit(0)
-    assert analyzer.can_prove(expr)
-    assert not cloned.can_prove(expr)
-    assert cloned.can_prove(x == x)
-    assert Analyzer().can_prove(expr)
+    with default_z3_fallback():
+        assert analyzer.can_prove(expr)
+        assert not cloned.can_prove(expr)
+        assert cloned.can_prove(x == x)
+        assert Analyzer().can_prove(expr)
+    assert not analyzer.can_prove(expr)
+    assert analyzer.can_prove(expr, SB)
+    assert not cloned.can_prove(expr, SB)
 
 
 def test_z3_default_fallback_scopes_and_resource_limit():
@@ -935,17 +970,87 @@ def test_z3_default_fallback_scopes_and_resource_limit():
     child_context.append(tvm_tirx.sym.PredicateConstraint(x != 0))
     analyzer.sync_constraint_context(child_context)
     try:
-        assert analyzer.can_prove(positive_square)
+        with default_z3_fallback():
+            assert analyzer.can_prove(positive_square)
     finally:
         analyzer.sync_constraint_context(parent_context)
-    assert not analyzer.can_prove(positive_square)
+    with default_z3_fallback():
+        assert not analyzer.can_prove(positive_square)
 
     limited = Analyzer()
     limited.set_z3_rlimit(1)
     a, b = tirx.Var("a", "int32"), tirx.Var("b", "int32")
-    assert not limited.can_prove(a * a + b * b >= 2 * a * b)
-    # A native literal proof still succeeds before the exhausted SMT fallback.
-    assert limited.can_prove(a == a)
+    with default_z3_fallback():
+        assert not limited.can_prove(a * a + b * b >= 2 * a * b)
+        # A native literal proof still succeeds before the exhausted SMT fallback.
+        assert limited.can_prove(a == a)
+
+
+def test_z3_default_fallback_nested_and_exception_exit():
+    analyzer = Analyzer()
+    x, y = tirx.Var("x", "int32"), tirx.Var("y", "int32")
+    expr = x * x + y * y >= 2 * x * y
+    assert not analyzer.can_prove(expr)
+    with pytest.raises(RuntimeError, match="outer"):
+        with default_z3_fallback():
+            assert analyzer.can_prove(expr) == analyzer.is_z3_enabled
+            with default_z3_fallback():
+                assert analyzer.can_prove(expr) == analyzer.is_z3_enabled
+            assert analyzer.can_prove(expr) == analyzer.is_z3_enabled
+            with pytest.raises(RuntimeError, match="inner"):
+                with default_z3_fallback():
+                    raise RuntimeError("inner")
+            assert analyzer.can_prove(expr) == analyzer.is_z3_enabled
+            raise RuntimeError("outer")
+    assert not analyzer.can_prove(expr)
+    # The policy is ambient, not a setting retained by cloned analyzers.
+    with default_z3_fallback():
+        cloned = analyzer.clone()
+        assert cloned.can_prove(expr) == analyzer.is_z3_enabled
+    assert not cloned.can_prove(expr)
+
+
+def test_z3_default_fallback_thread_isolation():
+    results = queue.Queue()
+    entered, release = threading.Event(), threading.Event()
+
+    def query():
+        analyzer = Analyzer()
+        x, y = tirx.Var("x", "int32"), tirx.Var("y", "int32")
+        return analyzer.can_prove(x * x + y * y >= 2 * x * y)
+
+    def worker():
+        try:
+            results.put(query())
+            with default_z3_fallback():
+                results.put(query())
+                entered.set()
+                assert release.wait(timeout=30)
+            results.put(query())
+        except BaseException as err:  # pylint: disable=broad-exception-caught
+            results.put(err)
+        finally:
+            entered.set()
+
+    # A newly started thread must not inherit the parent's active scope.
+    thread = threading.Thread(target=worker)
+    try:
+        with default_z3_fallback():
+            thread.start()
+            assert entered.wait(timeout=30)
+            assert query() == Analyzer().is_z3_enabled
+        # The worker's scope is still active, but the parent's has exited.
+        assert not query()
+    finally:
+        release.set()
+        thread.join(timeout=30)
+    assert not thread.is_alive()
+    values = [results.get_nowait() for _ in range(results.qsize())]
+    for value in values:
+        if isinstance(value, BaseException):
+            raise value
+    assert values == [False, Analyzer().is_z3_enabled, False]
+    assert not query()
 
 
 # ---------------------------------------------------------------------------
