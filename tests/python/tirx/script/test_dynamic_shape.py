@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import ast
 import runpy
 import sys
 
@@ -150,7 +151,6 @@ class Module:
         assert function.body[0].value.same_as(n)
 
 
-@pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 695 requires Python 3.12")
 def test_type_vars_roundtrip():
     M = T.dynamic("M")
     UNUSED = T.dynamic("UNUSED")  # noqa: F841 - Keep this lexical-scope fixture for parser capture.
@@ -161,23 +161,14 @@ def test_type_vars_roundtrip():
 
     script = func.script()
     assert script.startswith("from __future__ import annotations\n\n")
-    assert "def main[M](" in script
+    assert "def main(" in script
     assert "T.Tensor((M, M * 2), T.float32)" in script
     assert "M = T.int32()" not in script
-    typed = tvm_tirx.script.from_source(
-        """
-@T.function(private=True)
-def func[M: int](A: T.Tensor((M, M * 2), T.float32)):
-    A[0, 0] = T.float32(1)
-""",
-        extra_vars={"I": tvm_tirx.script.ir, "T": tvm_tirx.script.tirx},
-    )
-    tvm_tirx.ir.assert_structural_equal(func, typed)
-    assert 'M = T.dynamic("M", dtype="int32")' not in script
+    assert 'M = T.dynamic("M", dtype="int32")' in script
 
     repeated = func.script()
     assert "from __future__ import annotations" in repeated
-    assert "def main[M](" in repeated
+    assert "def main(" in repeated
     assert "T.Tensor((M, M * 2), T.float32)" in repeated
     assert "UNUSED" not in script
     assert "M = T.int32()" not in repeated
@@ -198,31 +189,57 @@ def func[M: int](A: T.Tensor((M, M * 2), T.float32)):
     )
 
 
-@pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 695 requires Python 3.12")
-def test_dynamic_int32_roundtrip():
-    n = T.dynamic("n", "int32")
+@pytest.mark.parametrize("dtype", ["int32", "int64"])
+def test_dynamic_symbol_roundtrip(tmp_path, dtype):
+    n = T.dynamic("n", dtype)
+    m = T.dynamic("n", dtype)
 
     @T.function(private=True)
-    def func(A: T.Tensor((n,), "float32")):
-        A[0] = T.float32(1)
+    def func(A: T.Tensor((n, m, n + 1), "float32")) -> T.Tensor((n, m, n + 1), "float32"):
+        T.evaluate(n + m)
+        return A
 
-    source = func.script()
-    assert "def main[n](" in source
-    assert 'n = T.dynamic("n", dtype="int32")' not in source
-    repeated = func.script()
-    assert "def main[n](" in repeated
+    source = func.script(extra_config={"ir.comment_imports": False})
+    declaration = f'n = T.dynamic("n", dtype="{dtype}")'
+    assert source.count(declaration) == 1
+    assert source.count(f'T.dynamic("n", dtype="{dtype}")') == 2
+    assert source.index(declaration) < source.index("def main(")
+    ast.parse(source, feature_version=(3, 10))
+    path = tmp_path / "dynamic_function.py"
+    path.write_text(source)
+    restored = runpy.run_path(str(path))["main"]
+    restored_n, restored_m, _ = restored.params[0].ty.shape
+    assert str(restored_n.ty.dtype) == dtype
+    assert str(restored_m.ty.dtype) == dtype
+    assert not restored_n.same_as(restored_m)
+    assert restored.ret_type.shape[0].same_as(restored_n)
+    assert restored.ret_type.shape[1].same_as(restored_m)
+    assert restored.body[0].value.a.same_as(restored_n)
+    assert restored.body[0].value.b.same_as(restored_m)
+    repeated = restored.script(extra_config={"ir.comment_imports": False})
+    assert source == repeated
+    tvm_tirx.ir.assert_structural_equal(func, restored)
     tvm_tirx.ir.assert_structural_equal(
         func,
         tvm_tirx.script.from_source(
             source, extra_vars={"I": tvm_tirx.script.ir, "T": tvm_tirx.script.tirx}
         ),
     )
-    tvm_tirx.ir.assert_structural_equal(
-        func,
-        tvm_tirx.script.from_source(
-            repeated, extra_vars={"I": tvm_tirx.script.ir, "T": tvm_tirx.script.tirx}
-        ),
+
+
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 695 requires Python 3.12")
+def test_generic_type_vars_roundtrip():
+    func = tvm_tirx.script.from_source(
+        """
+@T.function(private=True)
+def func[M: int](A: T.Tensor((M, M * 2), T.float32)):
+    A[0, 0] = T.float32(1)
+""",
+        extra_vars={"T": T},
     )
+    source = func.script(extra_config={"ir.comment_imports": False})
+    ast.parse(source, feature_version=(3, 10))
+    tvm_tirx.ir.assert_structural_equal(func, tvm_tirx.script.from_source(source))
 
 
 def test_dynamic_module_body_identity():

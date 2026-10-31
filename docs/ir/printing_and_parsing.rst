@@ -64,20 +64,21 @@ The output is:
 
    # from tvm_tirx.script import tirx as T
 
+   n = T.dynamic("n", dtype="int32")
    @T.function
-   def add_one[n](A: T.Tensor((n,), T.float32), B: T.Tensor((n,), T.float32)):
+   def add_one(A: T.Tensor((n,), T.float32), B: T.Tensor((n,), T.float32)):
        for i in range(n):
            B[i] = A[i] + T.float32(1.0)
 
 The printer writes out everything the IR records. The constant ``1``
 becomes ``T.float32(1.0)``, its value with the type the addition uses. The
-symbolic dimension ``n`` is declared in ``[n]`` after the function name,
-using the type-parameter syntax introduced in Python 3.12. Each name in
-the brackets declares a symbolic variable as if by ``T.dynamic``, but
-scoped to this function, so the printed function is self-contained. On
-Python 3.12 and newer, we can also write this form ourselves. A symbol with a dtype other than ``int32`` carries an
-annotation, as in ``[m: T.int64]``. The same method works on smaller
-objects. For example, ``add_one.params[0].ty.script()`` returns
+symbolic dimension ``n`` is declared with ``T.dynamic`` before the function,
+including its dtype. This keeps the printed function self-contained and
+compatible with Python 3.10 and newer. On Python 3.12 and newer, the parser
+also accepts function-scoped symbols written as ``def add_one[n](...)`` or
+``def add_one[m: T.int64](...)``. The printer uses explicit declarations
+on every Python version. The same method works on smaller objects.
+For example, ``add_one.params[0].ty.script()`` returns
 ``T.Tensor((n,), T.float32)``.
 
 A module prints the same way, as a class marked with ``@T.ir_module`` with
@@ -105,12 +106,12 @@ The output is:
                B[i] = A[i] + T.float32(1.0)
 
 Functions in a module can share symbols, so ``n`` is declared once before
-the class instead of in ``[n]``.
+the class and reused by its functions.
 
 The printed output is TVMScript that ``@T.function`` and ``@T.ir_module``
-accept. On Python 3.12 and newer, a printed function placed in a Python
-file, here ``add_one_printed.py`` with its import enabled, builds the same
-IR again:
+accept. A printed function placed in a Python file, here
+``add_one_printed.py`` with its import enabled, builds the same IR again
+on every supported Python version:
 
 .. literalinclude:: ../../examples/ir_walkthrough/add_one_printed.py
    :language: python
@@ -275,7 +276,7 @@ The output ends with:
 .. code-block:: text
 
    @T.function
-   def add_one[n](A: T.Tensor((n,), T.float32), B: T.Tensor((n,), T.float32)):
+   def add_one(A: T.Tensor((n,), T.float32), B: T.Tensor((n,), T.float32)):
        for i in range(n):
            B[i] = A[i] + T.float32(1.0)  # result dtype: float32
                   ^^^^^^^^^^^^^^^^^^^^^

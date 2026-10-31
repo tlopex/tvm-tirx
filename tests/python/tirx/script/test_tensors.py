@@ -21,7 +21,6 @@
 """TIRx script tensors."""
 
 import math
-import sys
 import uuid
 
 import pytest
@@ -351,14 +350,13 @@ def test_tensor():
     assert_structural_equal(test, from_source(code))
 
 
-@pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 695 requires Python 3.12")
 def test_tensor_shape_repeated_var_prints_out_of_line():
     n = tvm_tirx.tirx.Var("n", "int32")
     tensor = tvm_tirx.tirx.Var("A", tvm_tirx.tirx.TensorType((n + n,), "float32"))
     func = tvm_tirx.tirx.Function([tensor], tvm_tirx.ir.Evaluate(0))
 
     code = func.script()
-    assert "def main[n](" in code
+    assert code.index('n = T.dynamic("n", dtype="int32")') < code.index("def main(")
     assert_structural_equal(func, from_source(code))
 
 

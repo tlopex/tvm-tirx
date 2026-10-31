@@ -17,8 +17,6 @@
 # ruff: noqa: E501, F841
 """TIRx function printing and roundtrip coverage."""
 
-import sys
-
 import pytest
 from tvm_ffi.access_path import AccessPath
 
@@ -36,7 +34,6 @@ def _assert_print(obj, expected):
     assert obj.script(verbose_expr=True).strip() == expected.strip()
 
 
-@pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 695 requires Python 3.12")
 def test_function_symbolic_tensor_param_roundtrip():
     n = tirx.Var("n", "int32")
     A = tirx.Var("A", tirx.TensorType([n + 1, n], "float32", layout=None))
@@ -46,7 +43,7 @@ def test_function_symbolic_tensor_param_roundtrip():
 
     source = func.script()
     assert "T.Tensor((n + 1, n)" in source
-    assert source.index("def main[n](") < source.index("T.evaluate(n)")
+    assert source.index('n = T.dynamic("n", dtype="int32")') < source.index("def main(")
     tvm_tirx.ir.assert_structural_equal(
         tvm_tirx.script.from_source(
             source,
@@ -56,7 +53,6 @@ def test_function_symbolic_tensor_param_roundtrip():
     )
 
 
-@pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 695 requires Python 3.12")
 def test_function_compound_tensor_shape_first_use_roundtrip():
     n = tirx.Var("n", "int32")
     A = tirx.Var("A", tirx.TensorType([tirx.max(n, 1)], "float32", layout=None))
@@ -66,7 +62,7 @@ def test_function_compound_tensor_shape_first_use_roundtrip():
 
     source = func.script()
     assert "T.Tensor((T.max(n, 1),)" in source
-    assert source.index("def main[n](") < source.index("T.evaluate(n)")
+    assert source.index('n = T.dynamic("n", dtype="int32")') < source.index("def main(")
     tvm_tirx.ir.assert_structural_equal(
         tvm_tirx.script.from_source(
             source,
