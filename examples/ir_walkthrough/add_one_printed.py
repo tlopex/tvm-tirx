@@ -14,7 +14,7 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-"""A Python 3.10-compatible form of the printed add_one function."""
+"""TVMScript definition of add_one for the parsing example."""
 
 # [printed.begin]
 from tvm_tirx.script import tirx as T
