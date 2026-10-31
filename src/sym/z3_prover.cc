@@ -341,12 +341,50 @@ class Z3Prover::Impl final : tvm::ExprFunctor<z3::expr(const Expr&)> {
     return false;
   }
 
+  // With no premises, a variable (or its remainder modulo k > 1) cannot
+  // equal one constant for every value: 0 or 1 supplies a counterexample.
+  // Checking this before Materialize avoids creating a context for common
+  // speculative equality/divisibility queries from scratch analyzers.
+  static bool HasUnconstrainedEqualityCounterexample(const PrimExpr& expr) {
+    const auto* eq = expr.as<prim::EQObj>();
+    if (eq == nullptr) return false;
+    auto check = [](const PrimExpr& lhs, const PrimExpr& rhs) {
+      const auto* constant = rhs.as<IntImmObj>();
+      if (constant == nullptr) return false;
+      PrimExpr variable = lhs;
+      if (const auto* mod = lhs.as<prim::FloorModObj>()) {
+        const auto* divisor = mod->b.as<IntImmObj>();
+        if (divisor == nullptr || divisor->value <= 1) return false;
+        variable = mod->a;
+      }
+      if (!variable->IsInstance<VarObj>() || !IsZ3SupportedExpr(variable.get())) return false;
+      // Zero is representable in every supported integer type. For a zero
+      // target we also need one, which is not representable in signed int1.
+      PrimType ty = variable.ty();
+      bool has_one = ty.MatchesCode(DLDataTypeCode::kDLBool) ||
+                     ty.MatchesCode(DLDataTypeCode::kDLUInt) ||
+                     (ty.MatchesCode(DLDataTypeCode::kDLInt) && ty.bits() > 1);
+      return constant->value != 0 || has_one;
+    };
+    return check(eq->a, eq->b) || check(eq->b, eq->a);
+  }
+
   /// @brief Check if the expression can be proved
   bool CanProve(const PrimExpr& expr, const std::vector<Constraint>& temporary_predicates) {
     // Z3 is only a fallback. Any failure (including z3::exception thrown by the
     // solver) must degrade to "cannot prove" instead of escaping to the caller.
     try {
       if (!IsZ3SupportedExpr(expr.get())) return false;
+      // The shortcut is valid only without journaled or query-local facts.
+      // Keep materialized provers on their existing query path and retain
+      // private contexts, whose resource-limited results are independent of
+      // unrelated analyzers' AST allocation histories.
+      if (!solver && temporary_predicates.empty() &&
+          std::all_of(scope_stack_.begin(), scope_stack_.end(),
+                      [](const auto& scope) { return scope.empty(); }) &&
+          HasUnconstrainedEqualityCounterexample(expr)) {
+        return false;
+      }
       // The trivial-bad-case check below consults the memo (IsFreeNode), so
       // the journal must be replayed first for it to see the bound vars.
       Materialize();

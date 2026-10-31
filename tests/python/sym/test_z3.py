@@ -79,6 +79,7 @@ def test_z3_context_lifetime_outlives_worker_thread():
             analyzer_context.append(tvm_tirx.sym.RangeConstraint(x, tvm_tirx.ir.Range(0, 16)))
             analyzer.sync_constraint_context(analyzer_context)
             assert analyzer.can_prove(x >= 0, SB)
+            analyzer.get_smtlib2(x >= 0)  # Force actual context/solver materialization.
             result_queue.put(("analyzer", analyzer))
         except BaseException as err:  # pylint: disable=broad-exception-caught
             result_queue.put(("error", err))
@@ -113,8 +114,8 @@ def test_z3_context_clone_lifetime():
     analyzer.sync_constraint_context(analyzer_context)
     assert analyzer.can_prove(expr, SB)
 
-    # Materialize a separate context before cloning. The clone must adopt the
-    # source Analyzer's context before copying any Z3 handles.
+    # Materialize a separate context before cloning. The clone must replay the
+    # source Analyzer's journal in its own independently materialized context.
     independent = Analyzer()
     independent_context = tvm_tirx.sym.ConstraintContext()
     independent_context.append(tvm_tirx.sym.RangeConstraint(a, tvm_tirx.ir.Range(-100000, -1)))
@@ -905,6 +906,89 @@ def test_z3_default_fallback_nonlinear_inequality():
     assert analyzer.can_prove(x == x)
     # Equality at x == y is a counterexample to the strict inequality.
     assert not analyzer.can_prove(x * x + y * y > 2 * (x * y))
+
+
+@pytest.mark.parametrize("dtype", ["int32", "uint32", "int64", "uint64"])
+@pytest.mark.parametrize("strength", [ProofStrength.DEFAULT, SB])
+@pytest.mark.parametrize("remainder", [False, True])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_z3_unconstrained_equality_skips_solver(dtype, strength, remainder, reverse):
+    _require_z3(Analyzer())
+    for constant in (0, 1):
+        analyzer = Analyzer()
+        x = tirx.Var("x", dtype)
+        lhs = x % 4 if remainder else x
+        rhs = tirx.const(constant, dtype)
+        condition = tirx.EQ(rhs, lhs) if reverse else tirx.EQ(lhs, rhs)
+        assert not analyzer.can_prove(condition, strength)
+        # Reading statistics may materialize an otherwise untouched solver,
+        # but there must not have been any SMT checks for this query.
+        assert "num-checks" not in analyzer.get_z3_stats()
+
+
+@pytest.mark.parametrize("strength", [ProofStrength.DEFAULT, SB])
+def test_z3_equality_shortcut_preserves_premises_and_resource_limits(strength):
+    analyzer = Analyzer()
+    _require_z3(analyzer)
+    x, y = tirx.Var("x", "int32"), tirx.Var("y", "int32")
+
+    # No premises: one is a counterexample to x % 4 == 0. A later genuinely
+    # useful Z3 query must still materialize with the configured resource limit.
+    assert not analyzer.can_prove(x % 4 == 0, strength)
+    analyzer.set_z3_rlimit(1)
+    assert not analyzer.can_prove(x * x + y * y >= 2 * x * y, strength)
+    analyzer.set_z3_rlimit(0)
+    assert analyzer.can_prove(x * x + y * y >= 2 * x * y, strength)
+
+    # This predicate requires nonlinear reasoning to establish x == 0; the
+    # unconstrained shortcut must not discard an accepted premise.
+    analyzer = Analyzer()
+    context = tvm_tirx.sym.ConstraintContext()
+    context.append(tvm_tirx.sym.PredicateConstraint(x * x == 0))
+    analyzer.sync_constraint_context(context)
+    assert analyzer.can_prove(x == 0, strength)
+
+    # Even an unrelated premise must bypass the uninitialized/no-premise path.
+    analyzer = Analyzer()
+    context = tvm_tirx.sym.ConstraintContext()
+    context.append(tvm_tirx.sym.PredicateConstraint(y >= 0))
+    analyzer.sync_constraint_context(context)
+    assert not analyzer.can_prove(x % 4 == 0, strength)
+    assert "num-checks" in analyzer.get_z3_stats()
+
+    # A singleton range can make the equality true. Removing it must restore
+    # the unconstrained answer, including after resetting a materialized solver.
+    context = tvm_tirx.sym.ConstraintContext()
+    context.append(tvm_tirx.sym.RangeConstraint(x, tvm_tirx.ir.Range(4, 5)))
+    analyzer.sync_constraint_context(context)
+    assert analyzer.can_prove(x % 4 == 0, strength)
+    analyzer.sync_constraint_context(tvm_tirx.sym.ConstraintContext())
+    assert not analyzer.can_prove(x % 4 == 0, strength)
+
+    # Let-local facts are query-local, not entries in the retained journal.
+    assert analyzer.can_prove(tirx.Let(x, y * 4, x % 4 == 0), strength)
+
+
+def test_z3_resource_limit_is_independent_of_unrelated_ast_history():
+    _require_z3(Analyzer())
+    limits = (200, 300, 400, 500, 700)
+    live_noise = []
+    expected = None
+    for batch in range(12):
+        if batch:
+            noise = Analyzer()
+            values = [tirx.Var(f"noise_{batch}_{index}", "int32") for index in range(batch * 7)]
+            noise.get_smtlib2(tirx.all(*(value * value >= 0 for value in values)))
+            live_noise.append(noise)
+        results = []
+        for limit in limits:
+            analyzer = Analyzer()
+            analyzer.set_z3_rlimit(limit)
+            x, y = tirx.Var("x", "int32"), tirx.Var("y", "int32")
+            results.append(analyzer.can_prove(x * x + y * y >= 2 * x * y, SB))
+        if expected is None:
+            expected = results
+        assert results == expected
 
 
 def test_z3_default_fallback_clone_preserves_independent_resource_limit():
