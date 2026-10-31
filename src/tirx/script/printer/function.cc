@@ -78,6 +78,10 @@ void PrintFunction(DocTranslatorObj* d, const tirx::FunctionObj* func, ExprDoc d
           args.push_back(argument);
         }
 
+        ffi::Map<Var, IdDoc> signature_candidates;
+        // GetImplicitDefs is live: keep an owning snapshot before translating the body.
+        for (const auto& [var, id] : d->GetImplicitDefs()) signature_candidates.Set(var, id);
+        for (const Var& var : func->params) signature_candidates.erase(var);
         ffi::Array<ffi::String> decorator_keys;
         ffi::Array<ExprDoc> decorator_values;
         if (!func->GetAttr(tvm::attr::kGlobalSymbol)) {
@@ -127,8 +131,20 @@ void PrintFunction(DocTranslatorObj* d, const tirx::FunctionObj* func, ExprDoc d
           ret_type = d->Translate(func->ret_type).value();
         }
         doc = FunctionDoc(IdDoc(name), args, {decorator}, ret_type, body);
-        // Leave free symbols implicit so root declarations precede the function.
-        // PEP 695 headers would make the printed source require Python 3.12.
+        auto module = d->GetOrCreateExtraState<ffi::Optional<IRModule>>("ir.module");
+        auto pending = d->GetImplicitDefs();
+        if (!module.has_value()) {
+          for (const auto& [var, signature_id] : signature_candidates) {
+            if (!pending.count(var) || !var->ty.as<PrimTypeObj>()) continue;
+            IdDoc id = VarDoc(d, var);
+            if (var->ty.as_or_throw<PrimType>()->dtype == (DLDataType{kDLInt, 32, 1})) {
+              doc->type_params.push_back(id);
+            } else {
+              doc->type_params.push_back(
+                  AssignDoc(id, std::nullopt, d->Translate(var->ty).value()));
+            }
+          }
+        }
       }
       return doc;
     });
