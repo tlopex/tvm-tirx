@@ -436,6 +436,7 @@ class TileDispatcher : public StmtExprMutator {
     op = stmt.as<BindObj>();
     TVM_FFI_ICHECK(op);
     RegisterStorageRoot(old_tensor, op->var, std::nullopt);
+    tensor_definitions_.Set(op->var, op->value);
 
     std::vector<Stmt> seq{stmt};
     AppendPostTensorDefStmts(&seq, old_tensor, op->var.as_or_throw<TensorVar>());
@@ -449,6 +450,7 @@ class TileDispatcher : public StmtExprMutator {
     TVM_FFI_ICHECK(op);
     const auto* tensor_call = op->value.as<CallObj>();
     RegisterStorageRoot(old_tensor, op->var, tensor_call->args[0]);
+    tensor_definitions_.Set(op->var, op->value);
 
     std::vector<Stmt> seq{stmt};
     AppendPostTensorDefStmts(&seq, old_tensor, op->var.as_or_throw<TensorVar>());
@@ -499,8 +501,15 @@ class TileDispatcher : public StmtExprMutator {
       inter_map = std::move(split.first);
       intra_map = std::move(split.second);
     }
+    // Give patterns the storage identity and definition that dominate this call.
+    // Keep this information separate from any cached values requested by patterns.
+    ffi::Map<Var, Var> storage_roots;
+    for (const auto& [view, root] : tensor_root_) storage_roots.Set(view, root);
+    auto dispatch_state = shared_state_;
+    dispatch_state.Set("tirx.storage_roots", storage_roots);
+    dispatch_state.Set("tirx.storage_definitions", tensor_definitions_);
     tile::DispatchContext sctx(target_, scope, launch_params_, var_range_map_,
-                               /*alloc_only=*/false, /*callbacks=*/{}, shared_state_, inter_map,
+                               /*alloc_only=*/false, /*callbacks=*/{}, dispatch_state, inter_map,
                                intra_map, scope_kind);
     Stmt res = tile::Dispatch(ffi::GetRef<Call>(op), sctx);
     // Implementation found, handle callbacks
@@ -582,6 +591,7 @@ class TileDispatcher : public StmtExprMutator {
   std::vector<Stmt> host_init_stmts_;
   /*! \brief Storage root of each tensor variable defined in the body. */
   std::unordered_map<Var, Var, ffi::ObjectPtrHash, ffi::ObjectPtrEqual> tensor_root_;
+  ffi::Map<Var, Expr> tensor_definitions_;
   std::unordered_map<TensorVar, std::vector<Stmt>, ffi::ObjectPtrHash, ffi::ObjectPtrEqual>
       post_tensor_def_stmts_;
   ffi::Map<ffi::String, ffi::ObjectRef> shared_state_;
