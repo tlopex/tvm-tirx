@@ -163,6 +163,61 @@ def test_layout_analysis_is_separate_from_verification():
     assert not first.layout_analyzer.same_as(second.layout_analyzer)
 
 
+@pytest.fixture
+def proof_context():
+    from tvm_tirx.backend.cuda.tile.patterns.common import Context
+
+    return Context(
+        SimpleNamespace(launch_params={}, var_range_map={}, scope_kind="thread", intra={})
+    )
+
+
+def test_require_checks_the_complete_finite_domain(proof_context, monkeypatch):
+    x = Var("x", "int32")
+    proof_context.add_range(x, tvm_tirx.ir.Range(0, 4))
+    proof_context.static_ranges[x] = range(4)
+    original = type(proof_context.analyzer).can_prove
+
+    def prove_ground(analyzer, condition):
+        if analyzer.same_as(proof_context.analyzer):
+            assert not tvm_tirx.tirx.analysis.undefined_vars(condition)
+        return original(analyzer, condition)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(type(proof_context.analyzer), "can_prove", prove_ground)
+        proof_context.require((x ^ 2) < 4, "bounded xor")
+    with pytest.raises(ValueError, match="not just the origin"):
+        proof_context.require(x == 0, "not just the origin")
+    assert not proof_context.analyzer.can_prove(x == 0)
+
+
+def test_require_keeps_symbolic_proofs_for_excluded_points(proof_context):
+    x = Var("x", "int32")
+    proof_context.add_range(x, tvm_tirx.ir.Range(0, 4))
+    proof_context.static_ranges[x] = range(4)
+    proof_context.constraints.append(tvm_tirx.sym.PredicateConstraint(x > 0))
+    proof_context.analyzer.sync_constraint_context(proof_context.constraints)
+    proof_context.require(x > 0, "zero is excluded by the premises")
+
+
+def test_require_preserves_unbounded_z3_proofs(proof_context):
+    if not proof_context.analyzer.is_z3_enabled:
+        pytest.skip("Z3 is unavailable")
+    x, y = Var("x", "int32"), Var("y", "int32")
+    proof_context.require(x * x + y * y >= 2 * x * y, "unbounded symbolic proof")
+    with pytest.raises(ValueError, match="strict inequality"):
+        proof_context.require(x * x + y * y > 2 * x * y, "strict inequality")
+
+
+def test_require_tries_symbolic_proofs_for_large_domains(proof_context):
+    x = Var("x", "uint64")
+    proof_context.static_ranges[x] = range(1 << 64)
+    condition = x >= 0
+    proof_context.constraints.append(tvm_tirx.sym.PredicateConstraint(condition))
+    proof_context.analyzer.sync_constraint_context(proof_context.constraints)
+    proof_context.require(condition, "large domain")
+
+
 def test_contract_rejections():
     with pytest.raises(RuntimeError, match="consecutive elements"):
         _dispatch(src_layout=TileLayout(S[(2, 4) : (8, 2)]))

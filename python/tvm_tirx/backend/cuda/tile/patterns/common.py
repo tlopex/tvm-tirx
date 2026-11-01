@@ -47,6 +47,9 @@ from tvm_tirx.script import tirx as T
 from tvm_tirx.sym import Analyzer, ConstraintContext, RangeConstraint
 from tvm_tirx.tirx.layout import TileLayout
 
+# Bound the work attempted before the symbolic prover gets a chance.
+_EAGER_PROOF_MAX_POINTS = 16
+
 
 def scalar(value):
     """Read a constant field stored as an ordinary IR operand."""
@@ -176,8 +179,6 @@ class Context:
             ),
             order="post",
         )
-        if self.analyzer.can_prove(condition):
-            return
         # Bitwise swizzles are not fully covered by the arithmetic analyzer.
         # Check the already fixed group/repeat and enclosing-loop coordinates
         # directly. This does not search for another layout, atom, or instruction.
@@ -196,19 +197,37 @@ class Context:
                 (range(n) for n in [*self.group_shape, *(self.repeat_shape or ())]),
             )
         )
-        if variables and all(var in domain for var in variables):
-            for values in product(*(domain[var] for var in variables)):
-                replacements = dict(zip(variables, values))
-                expr = tvm_ffi.structural_map(
-                    condition,
-                    (Var, lambda var: IntImm(var.ty.dtype, replacements[var])),
-                    order="pre",
-                )
-                if not self.analyzer.can_prove(expr):
-                    break
-            else:
+        finite = variables and all(var in domain for var in variables)
+        if finite:
+            try:
+                points = prod(len(domain[var]) for var in variables)
+            except OverflowError:
+                points = _EAGER_PROOF_MAX_POINTS + 1
+            # Small complete domains are cheap to check directly, avoiding an
+            # inconclusive SMT attempt for each address in a descriptor walk.
+            if points <= _EAGER_PROOF_MAX_POINTS and self._prove_finite(
+                condition, variables, domain
+            ):
                 return
+        # A failed finite check is not a disproof: additional premises can
+        # exclude that point. Preserve symbolic reasoning and the old fallback.
+        if self.analyzer.can_prove(condition):
+            return
+        if finite and self._prove_finite(condition, variables, domain):
+            return
         raise ValueError(f"{message}: cannot prove {self.analyzer.simplify(condition)}")
+
+    def _prove_finite(self, condition, variables, domain):
+        for values in product(*(domain[var] for var in variables)):
+            replacements = dict(zip(variables, values))
+            expr = tvm_ffi.structural_map(
+                condition,
+                (Var, lambda var: IntImm(var.ty.dtype, replacements[var])),
+                order="pre",
+            )
+            if not self.analyzer.can_prove(expr):
+                return False
+        return True
 
     def loops(self, shape):
         self.repeat_shape = tuple(shape)
