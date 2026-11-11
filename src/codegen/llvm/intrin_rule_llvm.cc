@@ -42,7 +42,31 @@ namespace llvm {
 namespace intrin {
 using tirx::FLowerIntrinsic;
 
+// Lower scalar unary math calls through libm. Only register this helper for ops
+// whose FP16 computation may use FP32; it is not a general extern ABI conversion.
+PrimExpr DispatchUnaryMathExtern(const PrimExpr& e, const Target& target) {
+  using ::tvm::codegen::intrin::DispatchPureExtern;
+  using ::tvm::codegen::intrin::FloatSuffix;
+  if (e.ty() != PrimType::Float(16)) {
+    return DispatchPureExtern<FloatSuffix>(e, target);
+  }
+  const CallObj* call = e.as<CallObj>();
+  TVM_FFI_ICHECK(call != nullptr);
+  TVM_FFI_ICHECK_EQ(call->args.size(), 1U);
+  // libm exposes float and double entry points. Match the float ABI, then
+  // restore the original result type and its rounding at the call boundary.
+  PrimType f32 = PrimType::Float(32);
+  PrimExpr arg = cast(call->args[0].as_or_throw<PrimExpr>(), f32);
+  PrimExpr promoted = Call(f32, call->op, {arg}).as_or_throw<PrimExpr>();
+  return cast(DispatchPureExtern<FloatSuffix>(promoted, target), e.ty());
+}
+
 TVM_FFI_STATIC_INIT_BLOCK() {
+  for (const char* name : {"prim.log1p", "prim.sinh", "prim.cosh", "prim.asin", "prim.acos",
+                           "prim.atan", "prim.asinh", "prim.acosh", "prim.erf"}) {
+    OpDef(name).set_attr<FLowerIntrinsic>("llvm.FLowerIntrinsic", DispatchUnaryMathExtern);
+  }
+
   OpDef("tirx.prefetch")
       .set_attr<FLowerIntrinsic>("llvm.FLowerIntrinsic",
                                  DispatchLLVMIntrin<::llvm::Intrinsic::prefetch, 4>);
@@ -144,22 +168,6 @@ TVM_FFI_STATIC_INIT_BLOCK() {
     PrimExpr x = call->args[0].as_or_throw<PrimExpr>();
     PrimExpr tan_x = sin(x) / cos(x);
     return tan_x;
-  });
-
-  OpDef("prim.asin")
-      .set_attr<FLegalize>("llvm.FLegalize", [](const PrimExpr& e, const Target& target) -> PrimExpr {
-    using namespace intrin;
-    const CallObj* call = e.as<CallObj>();
-    TVM_FFI_ICHECK(call != nullptr);
-    return ::tvm::codegen::intrin::DispatchPureExtern<::tvm::codegen::intrin::FloatSuffix>(e, target);
-  });
-
-  OpDef("prim.acos")
-      .set_attr<FLegalize>("llvm.FLegalize", [](const PrimExpr& e, const Target& target) -> PrimExpr {
-    using namespace intrin;
-    const CallObj* call = e.as<CallObj>();
-    TVM_FFI_ICHECK(call != nullptr) << "Invalid call node in acos legalization";
-    return ::tvm::codegen::intrin::DispatchPureExtern<::tvm::codegen::intrin::FloatSuffix>(e, target);
   });
 
   OpDef("prim.atanh")
