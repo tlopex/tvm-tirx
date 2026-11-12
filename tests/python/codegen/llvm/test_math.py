@@ -282,6 +282,31 @@ def test_ldexp_integer_exponent(dtype, lanes):
     _assert_result(actual, expected, exact=True)
 
 
+@pytest.mark.parametrize(
+    "name", ["exp", "exp2", "exp10", "log", "log2", "log10", "sin", "cos", "pow"]
+)
+@pytest.mark.parametrize("lanes", [1, 4])
+def test_float16_llvm_intrinsics_keep_precision(name, lanes):
+    # Leave native instruction selection and any required promotion to LLVM.
+    # Numerical tests alone cannot detect an unnecessary conversion to FP32.
+    dtype = "float16" if lanes == 1 else f"float16x{lanes}"
+    op = getattr(tvm_tirx.tirx, name)
+
+    def apply(x, y):
+        return op(x, y) if name == "pow" else op(x)
+
+    @T.function
+    def kernel(A: T.Tensor((1,), dtype), B: T.Tensor((1,), dtype), C: T.Tensor((1,), dtype)):
+        C[0] = apply(A[0], B[0])
+
+    llvm_ir = tvm_tirx.compile(kernel, target="llvm").mod.inspect_source("ll")
+    intrinsic = "pow" if name == "exp10" else name
+    overload = "f16" if lanes == 1 else f"v{lanes}f16"
+    assert re.search(rf"call\b[^\n]*@llvm\.{intrinsic}\.{overload}\(", llvm_ir)
+    assert "fpext" not in llvm_ir
+    assert "fptrunc" not in llvm_ir
+
+
 def test_float16_math_rounds_at_each_call():
     inputs = np.array([12, -20, 0.5, -0.5], dtype="float16")
     actual = _run_unary(lambda x: tvm_tirx.tirx.sqrt(tvm_tirx.tirx.exp(x)), inputs, 1)

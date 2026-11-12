@@ -43,10 +43,10 @@ namespace llvm {
 namespace intrin {
 using tirx::FLowerIntrinsic;
 
-// Choose the compute type before lowering a math operation or expanding it into
-// other operations. Round at the original call boundary, and retain integer
-// arguments (for example, the exponent of ldexp). Exact and precision-dependent
-// operations such as copysign and nextafter do not use this promotion policy.
+// Use FP32 for the libm ABI and for expanded math expressions that need wider
+// intermediate precision. Round at the original call boundary, retaining integer
+// arguments (for example, the exponent of ldexp). Direct LLVM math intrinsics
+// keep their original type so LLVM can select native operations or legalize them.
 template <auto Lower>
 PrimExpr DispatchFloatMath(const PrimExpr& e, const Target& target) {
   PrimType ty = e.ty();
@@ -161,8 +161,7 @@ TVM_FFI_STATIC_INIT_BLOCK() {
   OpDef("prim.copysign")
       .set_attr<FLowerIntrinsic>("llvm.FLowerIntrinsic",
                                  DispatchLLVMPureIntrin<::llvm::Intrinsic::copysign, 2>);
-  OpDef("prim.exp10")
-      .set_attr<FLowerIntrinsic>("llvm.FLowerIntrinsic", DispatchFloatMath<DispatchExp10>);
+  OpDef("prim.exp10").set_attr<FLowerIntrinsic>("llvm.FLowerIntrinsic", DispatchExp10);
   OpDef("prim.rsqrt")
       .set_attr<FLowerIntrinsic>("llvm.FLowerIntrinsic", DispatchFloatMath<DispatchRSqrt>);
   OpDef("prim.sigmoid")
@@ -173,33 +172,28 @@ TVM_FFI_STATIC_INIT_BLOCK() {
                                  DispatchLLVMIntrin<::llvm::Intrinsic::prefetch, 4>);
 
   OpDef("prim.exp")
-      .set_attr<FLowerIntrinsic>(
-          "llvm.FLowerIntrinsic",
-          DispatchFloatMath<DispatchLLVMPureIntrin<::llvm::Intrinsic::exp, 1>>);
+      .set_attr<FLowerIntrinsic>("llvm.FLowerIntrinsic",
+                                 DispatchLLVMPureIntrin<::llvm::Intrinsic::exp, 1>);
 
   OpDef("prim.exp2")
-      .set_attr<FLowerIntrinsic>(
-          "llvm.FLowerIntrinsic",
-          DispatchFloatMath<DispatchLLVMPureIntrin<::llvm::Intrinsic::exp2, 1>>);
+      .set_attr<FLowerIntrinsic>("llvm.FLowerIntrinsic",
+                                 DispatchLLVMPureIntrin<::llvm::Intrinsic::exp2, 1>);
 
   OpDef("prim.fma")
       .set_attr<FLowerIntrinsic>("llvm.FLowerIntrinsic",
                                  DispatchLLVMPureIntrin<::llvm::Intrinsic::fmuladd, 3>);
 
   OpDef("prim.log")
-      .set_attr<FLowerIntrinsic>(
-          "llvm.FLowerIntrinsic",
-          DispatchFloatMath<DispatchLLVMPureIntrin<::llvm::Intrinsic::log, 1>>);
+      .set_attr<FLowerIntrinsic>("llvm.FLowerIntrinsic",
+                                 DispatchLLVMPureIntrin<::llvm::Intrinsic::log, 1>);
 
   OpDef("prim.log2")
-      .set_attr<FLowerIntrinsic>(
-          "llvm.FLowerIntrinsic",
-          DispatchFloatMath<DispatchLLVMPureIntrin<::llvm::Intrinsic::log2, 1>>);
+      .set_attr<FLowerIntrinsic>("llvm.FLowerIntrinsic",
+                                 DispatchLLVMPureIntrin<::llvm::Intrinsic::log2, 1>);
 
   OpDef("prim.log10")
-      .set_attr<FLowerIntrinsic>(
-          "llvm.FLowerIntrinsic",
-          DispatchFloatMath<DispatchLLVMPureIntrin<::llvm::Intrinsic::log10, 1>>);
+      .set_attr<FLowerIntrinsic>("llvm.FLowerIntrinsic",
+                                 DispatchLLVMPureIntrin<::llvm::Intrinsic::log10, 1>);
 
   OpDef("prim.sqrt")
       .set_attr<FLowerIntrinsic>("llvm.FLowerIntrinsic",
@@ -230,23 +224,20 @@ TVM_FFI_STATIC_INIT_BLOCK() {
                                  DispatchLLVMPureIntrin<::llvm::Intrinsic::nearbyint, 1>);
 
   OpDef("prim.pow")
-      .set_attr<FLowerIntrinsic>(
-          "llvm.FLowerIntrinsic",
-          DispatchFloatMath<DispatchLLVMPureIntrin<::llvm::Intrinsic::pow, 2>>);
+      .set_attr<FLowerIntrinsic>("llvm.FLowerIntrinsic",
+                                 DispatchLLVMPureIntrin<::llvm::Intrinsic::pow, 2>);
 
   OpDef("prim.popcount")
       .set_attr<FLowerIntrinsic>("llvm.FLowerIntrinsic",
                                  DispatchLLVMPureIntrin<::llvm::Intrinsic::ctpop, 1>);
 
   OpDef("prim.cos")
-      .set_attr<FLowerIntrinsic>(
-          "llvm.FLowerIntrinsic",
-          DispatchFloatMath<DispatchLLVMPureIntrin<::llvm::Intrinsic::cos, 1>>);
+      .set_attr<FLowerIntrinsic>("llvm.FLowerIntrinsic",
+                                 DispatchLLVMPureIntrin<::llvm::Intrinsic::cos, 1>);
 
   OpDef("prim.sin")
-      .set_attr<FLowerIntrinsic>(
-          "llvm.FLowerIntrinsic",
-          DispatchFloatMath<DispatchLLVMPureIntrin<::llvm::Intrinsic::sin, 1>>);
+      .set_attr<FLowerIntrinsic>("llvm.FLowerIntrinsic",
+                                 DispatchLLVMPureIntrin<::llvm::Intrinsic::sin, 1>);
 }
 }  // namespace intrin
 
