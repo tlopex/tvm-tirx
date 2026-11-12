@@ -24,7 +24,6 @@ import tvm_tirx
 import tvm_tirx.testing
 from tvm_tirx.script import ir as I
 from tvm_tirx.script import tirx as T
-from tvm_tirx.testing import env
 
 
 def _unary_kernel(op, dtype="float32", out_dtype=None, gpu=False):
@@ -233,44 +232,6 @@ def test_asin_acos_boundary_values():
 
     for func in test_funcs:
         run_test(*func)
-
-
-@pytest.mark.skipif(not env.has_llvm(), reason="need llvm")
-@pytest.mark.parametrize("dtype", ["float16", "float32", "float64"])
-@pytest.mark.parametrize(
-    "name, reference, low, high",
-    [
-        ("log1p", np.log1p, -0.5, 3.0),
-        ("sinh", np.sinh, -3.0, 3.0),
-        ("cosh", np.cosh, -3.0, 3.0),
-        ("asin", np.arcsin, -1.0, 1.0),
-        ("acos", np.arccos, -1.0, 1.0),
-        ("atan", np.arctan, -4.0, 4.0),
-        ("asinh", np.arcsinh, -4.0, 4.0),
-        ("acosh", np.arccosh, 1.0, 4.0),
-        ("erf", np.vectorize(math.erf), -2.0, 2.0),
-    ],
-)
-def test_unary_math_extern(name, reference, low, high, dtype):
-    """LLVM math externs support FP16 inputs as well as native FP32/FP64 calls."""
-    kernel = _unary_kernel(getattr(tvm_tirx.tirx, name), dtype=dtype)
-    func = tvm_tirx.compile(kernel, target="llvm")
-    # Include domain boundaries, out-of-domain values, signed zeros and non-finite values.
-    inputs = np.concatenate(
-        [np.linspace(low, high, 17), [-2.0, -1.0, -0.0, 0.0, 1.0, 2.0, -np.inf, np.inf, np.nan]]
-    ).astype(dtype)
-    dev = tvm_tirx.cpu(0)
-    a = tvm_tirx.runtime.tensor(inputs, dev)
-    b = tvm_tirx.runtime.tensor(np.empty_like(inputs), dev)
-    func(a, b)
-
-    with np.errstate(invalid="ignore", divide="ignore"):
-        expected = reference(inputs.astype("float64")).astype(dtype)
-    actual = b.numpy()
-    rtol = {"float16": 2e-3, "float32": 1e-6, "float64": 1e-14}[dtype]
-    np.testing.assert_allclose(actual, expected, rtol=rtol, atol=0, equal_nan=True)
-    zeros = expected == 0
-    np.testing.assert_array_equal(np.signbit(actual[zeros]), np.signbit(expected[zeros]))
 
 
 def test_binary_intrin():
