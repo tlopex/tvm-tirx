@@ -232,5 +232,58 @@ def test_lower_floordiv_overflow_checks(dtype, clamp, data):
         assert compiled(value) == expected // 3
 
 
+@pytest.mark.parametrize("target", ["llvm", "webgpu"])
+def test_lower_floordiv_offset_for_narrowed_index(target):
+    @I.ir_module
+    class Before:
+        @T.function
+        def main(A: T.Tensor((20,), "float32"), B: T.Tensor((20,), "float32"), n: T.int32):
+            T.func_attr({"target": T.target(target)})
+            B[T.floordiv(T.Cast("int64", n), T.int64(20))] = A[
+                T.floormod(T.Cast("int64", n), T.int64(20))
+            ]
+
+    # LLVM keeps the int64 offset lowering.
+    keeps_offset = target == "llvm"
+
+    def lowered(x, kind, dtype, offset):
+        scalar = getattr(T, dtype)
+        if offset:
+            # The offset 107374183 * 20 = 2147483660 exceeds int32.
+            shifted = x + scalar(2147483660)
+            if kind == "div":
+                return T.Div(shifted, scalar(20)) - scalar(107374183)
+            return T.truncmod(shifted, scalar(20))
+        sign = T.truncmod(x, scalar(20)) >> scalar(int(dtype[3:]) - 1)
+        if kind == "div":
+            return T.Div(x, scalar(20)) + sign
+        return T.truncmod(x, scalar(20)) + (scalar(20) & sign)
+
+    @I.ir_module
+    class Expected:
+        @T.function
+        def main(A: T.Tensor((20,), "float32"), B: T.Tensor((20,), "float32"), n: T.int32):
+            T.func_attr({"target": T.target(target)})
+            B[lowered(T.Cast("int64", n), "div", "int64", keeps_offset)] = A[
+                lowered(T.Cast("int64", n), "mod", "int64", keeps_offset)
+            ]
+
+    After = tvm_tirx.tirx.transform.LowerIntrin()(Before)
+    tvm_tirx.ir.assert_structural_equal(After, Expected)
+    if target != "webgpu":
+        return
+
+    # WebGPU code generation narrows the lowered int64 indices to int32.
+    @I.ir_module
+    class Narrowed:
+        @T.function
+        def main(A: T.Tensor((20,), "float32"), B: T.Tensor((20,), "float32"), n: T.int32):
+            T.func_attr({"target": T.target(target)})
+            B[lowered(n, "div", "int32", False)] = A[lowered(n, "mod", "int32", False)]
+
+    After = tvm_tirx.tirx.transform.ForceNarrowIndexToInt32()(After)
+    tvm_tirx.ir.assert_structural_equal(After, Narrowed)
+
+
 if __name__ == "__main__":
     tvm_tirx.testing.main()

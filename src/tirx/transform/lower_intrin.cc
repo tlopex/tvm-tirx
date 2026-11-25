@@ -36,6 +36,7 @@
 #include <tvm/tirx/stmt_functor_with_constraint_context.h>
 #include <tvm/tirx/transform.h>
 
+#include <algorithm>
 #include <limits>
 #include <unordered_set>
 
@@ -54,6 +55,8 @@ class IntrinInjecter : public StmtExprMutatorWithConstraintContext {
       : StmtExprMutatorWithConstraintContext(context), target_(tgt) {
     std::string target = tgt->kind->name;
     ffi::String mtriple = tgt->GetAttr<ffi::String>("mtriple").value_or("");
+    // WebGPU code generation narrows int64 to int32 (ForceNarrowIndexToInt32).
+    if (target == "webgpu") max_int_value_ = std::numeric_limits<int32_t>::max();
 
     std::vector<std::string> patterns;
     // Add the fast math patterns when requested.  The priority of the fast math
@@ -364,7 +367,8 @@ class IntrinInjecter : public StmtExprMutatorWithConstraintContext {
                          .as_or_throw<IntImm>()
                          ->value.as<int64_t>();
     if (!dtype_max.has_value()) return std::nullopt;
-    const int64_t max_value_of_dtype = *dtype_max;
+    // The shift constant and the shifted dividend must also fit after narrowing.
+    const int64_t max_value_of_dtype = std::min(*dtype_max, max_int_value_);
 
     // NOTE: ensures that (b-1) - a_min does not overflow
     // also note: max_value_of_dtype + const_int_bound_a->min_value won't overflow
@@ -391,6 +395,8 @@ class IntrinInjecter : public StmtExprMutatorWithConstraintContext {
   Target target_;
   FLowerGeneral fma_{nullptr};
   bool support_bitwise_op_{true};
+  /*! \brief The largest integer value the generated code represents. */
+  int64_t max_int_value_{std::numeric_limits<int64_t>::max()};
 };
 
 Stmt LowerIntrinStmt(Stmt stmt, const std::string& target) {
